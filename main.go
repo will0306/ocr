@@ -15,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcfg"
+	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
@@ -239,6 +240,17 @@ func main() {
 			new(Ocr),
 		)
 	})
-	s.SetPort(8888)
+
+	ctx := gctx.New()
+	adapter, err := gcfg.NewAdapterFile("config")
+	if err != nil {
+		g.Log().Error(ctx, err.Error())
+		return
+	}
+	err = adapter.AddPath("config/")
+	if err != nil {
+		g.Log().Error(ctx, err.Error())
+		return
+	}
 	s.Run()
 }

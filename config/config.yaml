@@ -1,3 +1,6 @@
+server:
+  address:     ":8808"
+
 ocr:
   secret: ""
   
