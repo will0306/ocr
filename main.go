@@ -41,8 +41,7 @@ type OcrPassportReq struct {
 }
 
 type OcrPassportRes struct {
-	Message string        `json:"message" dc:"api tip"`
-	Data    *PassportInfo `json:"data"    dc:"api result"`
+	PassportInfo *PassportInfo `json:"passport_info"    dc:"api result"`
 }
 
 type PassportInfo struct {
@@ -208,7 +207,7 @@ func (Ocr) PassportHandler(ctx context.Context, req *OcrPassportReq) (resp *OcrP
 		break
 	}
 	resp = &OcrPassportRes{
-		Data: passportInfo,
+		PassportInfo: passportInfo,
 	}
 	return
 }
