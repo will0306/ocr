@@ -197,7 +197,7 @@ func (Ocr) PassportHandler(ctx context.Context, req *OcrPassportReq) (resp *OcrP
 
 	startTime := time.Now().Unix()
 	// The Gemini 1.5 models are versatile and work with most use cases
-	model := client.GenerativeModel("gemini-1.5-flash-8b")
+	model := client.GenerativeModel("gemini-1.5-flash")
 
 	genaiReq := []genai.Part{
 		genai.ImageData("jpeg", imageBytes),
