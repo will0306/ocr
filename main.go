@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ type OcrRes struct {
 
 type OcrPassportReq struct {
 	g.Meta  `path:"/ocr/passport" method:"post"`
-	Content string `v:"required" json:"content"`
+	Content string `json:"content"`
 	Url     string `json:"url"`
 }
 
@@ -126,7 +127,7 @@ func (Ocr) OcrHandler(ctx context.Context, req *OcrReq) (res *OcrRes, err error)
 
 	prompt := []genai.Part{
 		genai.ImageData("png", decodedBytes),
-		genai.Text("Get the Content from the picture"),
+		genai.Text("Get the Number from the picture"),
 	}
 	resp, err := model.GenerateContent(ctx, prompt...)
 
@@ -135,6 +136,7 @@ func (Ocr) OcrHandler(ctx context.Context, req *OcrReq) (res *OcrRes, err error)
 	}
 
 	respBytes, _ := json.Marshal(resp.Candidates[0].Content.Parts)
+	g.Log().Infof(ctx, "ocr: %s", respBytes)
 	codes := extractNumbers(string(respBytes))
 	res = &OcrRes{}
 	if len(codes) > 0 {
@@ -146,9 +148,32 @@ func (Ocr) OcrHandler(ctx context.Context, req *OcrReq) (res *OcrRes, err error)
 func (Ocr) PassportHandler(ctx context.Context, req *OcrPassportReq) (resp *OcrPassportRes, err error) {
 
 	// 转换 Base64 字符串为 io.Reader
-	reader, err := base64ToReader(req.Content)
-	if err != nil {
-		return nil, err
+	if req.Url == "" && req.Content == "" {
+		return
+	}
+	var reader io.Reader
+	var imageBytes []byte
+	if req.Url != "" {
+		imageResp, err := http.Get(req.Url)
+		if err != nil {
+			return nil, err
+		}
+		defer imageResp.Body.Close()
+		reader = imageResp.Body
+		imageBytes, err = io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+
+		reader, err = base64ToReader(req.Content)
+		if err != nil {
+			return nil, err
+		}
+		imageBytes, err = io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	adapter, err := gcfg.NewAdapterFile("config")
@@ -172,15 +197,29 @@ func (Ocr) PassportHandler(ctx context.Context, req *OcrPassportReq) (resp *OcrP
 
 	startTime := time.Now().Unix()
 	// The Gemini 1.5 models are versatile and work with most use cases
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel("gemini-1.5-flash-8b")
 
-	file, err := client.UploadFile(ctx, "", reader, nil)
+	genaiReq := []genai.Part{
+		genai.ImageData("jpeg", imageBytes),
+
+		genai.Text("用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name "),
+	}
+
+	// Generate content.
+	geminiResp, err := model.GenerateContent(ctx, genaiReq...)
 	if err != nil {
 		return nil, err
 	}
-	defer client.DeleteFile(ctx, file.Name)
 
-	geminiResp, err := model.GenerateContent(ctx, genai.Text("用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name "), genai.FileData{URI: file.URI})
+	/*
+		file, err := client.UploadFile(ctx, "", reader, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer client.DeleteFile(ctx, file.Name)
+
+		geminiResp, err := model.GenerateContent(ctx, genai.Text("用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name "), genai.FileData{URI: file.URI})
+	*/
 	endTime := time.Now().Unix()
 	g.Log().Infof(ctx, "PassportHandler cost %d second", endTime-startTime)
 	if err != nil {
