@@ -2,13 +2,12 @@ package main
 
 import (
 	"bytes"
+	"codeocr/api"
+	"codeocr/lib/ocr"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -17,44 +16,38 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcfg"
 	"github.com/gogf/gf/v2/os/gctx"
-	"github.com/google/generative-ai-go/genai"
-	"google.golang.org/api/option"
 )
 
-type Response struct {
-	Message string      `json:"message" dc:"api tip"`
-	Data    interface{} `json:"data"    dc:"api result"`
-}
+// parseAndFormatDate 尝试将多种日期格式转换为 dd/mm/yyyy 格式
+func parseAndFormatDate(inputDate string, outputFormat string) (string, error) {
+	// 定义多种可能的输入日期格式
+	formats := []string{
+		"02 Jan 2006",     // 08 JUN 1996
+		"02/01/2006",      // 08/06/1996
+		"2006-01-02",      // 1996-06-08
+		"02-01-2006",      // 08-06-1996
+		"02.01.2006",      // 08.06.1996
+		"January 2, 2006", // June 8, 1996
+		"2 Jan 2006",      // 8 JUN 1996
+	}
 
-type OcrReq struct {
-	g.Meta  `path:"/ocr" method:"post"`
-	Content string `v:"required" json:"content"`
-}
+	// 遍历格式列表并尝试解析
+	var parsedTime time.Time
+	var err error
+	for _, format := range formats {
+		parsedTime, err = time.Parse(format, strings.ToUpper(inputDate))
+		if err == nil {
+			// 成功解析，退出循环
+			break
+		}
+	}
 
-type OcrRes struct {
-	Content string `json:"content" dc:"ocr result"`
-}
+	if err != nil {
+		return "", fmt.Errorf("无法解析日期: %s", inputDate)
+	}
 
-type OcrPassportReq struct {
-	g.Meta  `path:"/ocr/passport" method:"post"`
-	Content string `json:"content"`
-	Url     string `json:"url"`
-}
-
-type OcrPassportRes struct {
-	PassportInfo *PassportInfo `json:"passport_info"    dc:"api result"`
-}
-
-type PassportInfo struct {
-	BirthDate   string `json:"birth_date"`
-	Surname     string `json:"surname"`
-	Givename    string `json:"givename"`
-	PassportNo  string `json:"passport_no"`
-	IssueDate   string `json:"issue_date"`
-	ExpiryDate  string `json:"expiry_date"`
-	Sex         string `json:"sex"`
-	Nationality string `json:"nationality"`
-	CountryCode string `json:"country_code"`
+	// 格式化为目标格式 dd/mm/yyyy
+	return parsedTime.Format(outputFormat), nil
 }
 
 func extractNumbers(input string) []string {
@@ -96,159 +89,31 @@ func base64ToReader(base64Str string) (io.Reader, error) {
 
 type Ocr struct{}
 
-func (Ocr) OcrHandler(ctx context.Context, req *OcrReq) (res *OcrRes, err error) {
+func (Ocr) OcrHandler(ctx context.Context, req *api.OcrReq) (res *api.OcrRes, err error) {
 
-	decodedBytes, err := base64ToBytes(req.Content)
+	serv := ocr.NewOcr(req.Platform)
+	resp, err := serv.ImageNumber(ctx, req.Content, req.Model)
 	if err != nil {
 		return nil, err
 	}
-
-	adapter, err := gcfg.NewAdapterFile("config")
-	if err != nil {
-		return nil, err
+	res = &api.OcrRes{
+		Content: resp,
 	}
-	err = adapter.AddPath("config/")
-	if err != nil {
-		return nil, err
-	}
-	secret, err := adapter.Get(ctx, "ocr.secret")
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(secret.(string)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer client.Close()
-
-	// The Gemini 1.5 models are versatile and work with most use cases
-	model := client.GenerativeModel("gemini-1.5-flash")
-
-	prompt := []genai.Part{
-		genai.ImageData("png", decodedBytes),
-		genai.Text("Get the Number from the picture"),
-	}
-	resp, err := model.GenerateContent(ctx, prompt...)
-
-	if err != nil {
-		return nil, err
-	}
-
-	respBytes, _ := json.Marshal(resp.Candidates[0].Content.Parts)
-	g.Log().Infof(ctx, "ocr: %s", respBytes)
-	codes := extractNumbers(string(respBytes))
-	res = &OcrRes{}
-	if len(codes) > 0 {
-		res.Content = codes[0]
-	}
-	return
+	return res, nil
 }
 
-func (Ocr) PassportHandler(ctx context.Context, req *OcrPassportReq) (resp *OcrPassportRes, err error) {
+func (Ocr) PassportHandler(ctx context.Context, req *api.OcrPassportReq) (resp *api.OcrPassportRes, err error) {
 
-	// 转换 Base64 字符串为 io.Reader
-	if req.Url == "" && req.Content == "" {
-		return
-	}
-	var reader io.Reader
-	var imageBytes []byte
-	if req.Url != "" {
-		imageResp, err := http.Get(req.Url)
-		if err != nil {
-			return nil, err
-		}
-		defer imageResp.Body.Close()
-		reader = imageResp.Body
-		imageBytes, err = io.ReadAll(reader)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-
-		reader, err = base64ToReader(req.Content)
-		if err != nil {
-			return nil, err
-		}
-		imageBytes, err = io.ReadAll(reader)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	adapter, err := gcfg.NewAdapterFile("config")
+	serv := ocr.NewOcr(req.Platform)
+	passportInfo, err := serv.PassportInfo(ctx, req.Content, req.Model)
 	if err != nil {
 		return nil, err
 	}
-	err = adapter.AddPath("config/")
-	if err != nil {
-		return nil, err
-	}
-	secret, err := adapter.Get(ctx, "ocr.secret")
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(secret.(string)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer client.Close()
-
-	startTime := time.Now().Unix()
-	// The Gemini 1.5 models are versatile and work with most use cases
-	model := client.GenerativeModel("gemini-1.5-flash")
-
-	genaiReq := []genai.Part{
-		genai.ImageData("jpeg", imageBytes),
-
-		genai.Text("用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name "),
-	}
-
-	// Generate content.
-	geminiResp, err := model.GenerateContent(ctx, genaiReq...)
-	if err != nil {
-		return nil, err
-	}
-
-	/*
-		file, err := client.UploadFile(ctx, "", reader, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer client.DeleteFile(ctx, file.Name)
-
-		geminiResp, err := model.GenerateContent(ctx, genai.Text("用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name "), genai.FileData{URI: file.URI})
-	*/
-	endTime := time.Now().Unix()
-	g.Log().Infof(ctx, "PassportHandler cost %d second", endTime-startTime)
-	if err != nil {
-		return nil, err
-	}
-
-	// 定义用于匹配 JSON 的正则表达式
-	re := regexp.MustCompile(`\{.*?\}`)
-
-	// 查找所有 JSON 子串
-	partsBytes, _ := json.Marshal(geminiResp.Candidates[0].Content.Parts)
-
-	jsonStrings := re.FindAllString(string(partsBytes), -1)
-	// 输出提取的 JSON 字符串
-	var passportInfo *PassportInfo
-	for _, jsonString := range jsonStrings {
-		jsonString = strings.ReplaceAll(jsonString, "\\n", "")
-		jsonString = strings.ReplaceAll(jsonString, "\\", "")
-
-		err := json.Unmarshal([]byte(jsonString), &passportInfo)
-		if err != nil {
-			return nil, err
-		}
-		break
-	}
-	resp = &OcrPassportRes{
+	resp = &api.OcrPassportRes{
 		PassportInfo: passportInfo,
 	}
-	return
+	return resp, nil
+
 }
 
 func Middleware(r *ghttp.Request) {
@@ -264,7 +129,7 @@ func Middleware(r *ghttp.Request) {
 	} else {
 		msg = "OK"
 	}
-	r.Response.WriteJson(Response{
+	r.Response.WriteJson(api.Response{
 		Message: msg,
 		Data:    res,
 	})
