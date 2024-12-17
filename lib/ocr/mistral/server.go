@@ -1,4 +1,4 @@
-package bigmodel
+package mistral
 
 import (
 	"codeocr/api"
@@ -17,14 +17,14 @@ import (
 )
 
 var (
-	defaultModel = "glm-4v-flash"
-	secretKey    = "bigmodel.secret"
-	endPoint     = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+	defaultModel = "pixtral-12b-2409"
+	secretKey    = "mistral.secret"
+	endPoint     = "https://api.mistral.ai/v1/chat/completions"
 )
 
-type BigModelServ struct{}
+type MistralServ struct{}
 
-func (b BigModelServ) ImageNumber(ctx context.Context, imageBase64 string, modelName string) (resp string, err error) {
+func (b MistralServ) ImageNumber(ctx context.Context, imageBase64 string, modelName string) (resp string, err error) {
 
 	if modelName == "" {
 		modelName = defaultModel
@@ -108,7 +108,7 @@ func (b BigModelServ) ImageNumber(ctx context.Context, imageBase64 string, model
 	return codes[0], nil
 }
 
-func (b BigModelServ) PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error) {
+func (b MistralServ) PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error) {
 
 	if modelName == "" {
 		modelName = defaultModel

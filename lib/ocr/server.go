@@ -4,6 +4,7 @@ import (
 	"codeocr/api"
 	"codeocr/lib/ocr/bigmodel"
 	"codeocr/lib/ocr/gemini"
+	"codeocr/lib/ocr/mistral"
 	"context"
 )
 
@@ -12,6 +13,7 @@ var (
 	platformMap     = map[string]OcrServer{
 		"gemini":   gemini.GeminiServ{},
 		"bigmodel": bigmodel.BigModelServ{},
+		"mistral":  mistral.MistralServ{},
 	}
 )
 
