@@ -209,3 +209,108 @@ func (b GeminiServ) PassportInfo(ctx context.Context, imageBase64, modelName str
 	}
 	return passportInfo, nil
 }
+
+func (b GeminiServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
+
+	var reader io.Reader
+	var imageBytes []byte
+	if modelName == "" {
+		modelName = "gemini-1.5-flash"
+	}
+	if isHTTPLink(imageBase64) {
+		imageResp, err := http.Get(imageBase64)
+		if err != nil {
+			return nil, err
+		}
+		defer imageResp.Body.Close()
+		reader = imageResp.Body
+		imageBytes, err = io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+
+		reader, err = base64ToReader(imageBase64)
+		if err != nil {
+			return nil, err
+		}
+		imageBytes, err = io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	adapter, err := gcfg.NewAdapterFile("config")
+	if err != nil {
+		return nil, err
+	}
+	err = adapter.AddPath("config/")
+	if err != nil {
+		return nil, err
+	}
+	secret, err := adapter.Get(ctx, "ocr.secret")
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := genai.NewClient(ctx, option.WithAPIKey(secret.(string)))
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	startTime := time.Now().Unix()
+	// The Gemini 1.5 models are versatile and work with most use cases
+	genaiModel := client.GenerativeModel(modelName)
+
+	genaiReq := []genai.Part{
+		genai.ImageData("jpeg", imageBytes),
+
+		genai.Text("Return in English JSON format: {\"data\": {\"face\": {\"licenseNumber\": \"\", \"name\": \"\", \"sex\": \"\", \"nationality\": \"\", \"address\": \"\", \"birthDate\": \"\", \"initialIssueDate\": \"\", \"approvedType\": \"\", \"issueAuthority\": \"\", \"validFromDate\": \"\", \"validPeriod\": \"\"}, \"back\": {\"name\": \"\", \"recordNumber\": \"\", \"record\": \"\", \"licenseNumber\": \"\"}}}. Use uppercase where appropriate. Date format: 02/01/2006. If information not present, leave empty string."),
+	}
+
+	// Generate content.
+	geminiResp, err := genaiModel.GenerateContent(ctx, genaiReq...)
+	if err != nil {
+		return nil, err
+	}
+
+	endTime := time.Now().Unix()
+	g.Log().Infof(ctx, "%s cost %d second", tool.GetFuncInfo(), endTime-startTime)
+	if err != nil {
+		return nil, err
+	}
+
+	// 定义用于匹配 JSON 的正则表达式
+	re := regexp.MustCompile(`\{.*?\}`)
+
+	// 查找所有 JSON 子串
+	partsBytes, _ := json.Marshal(geminiResp.Candidates[0].Content.Parts)
+
+	jsonStrings := re.FindAllString(string(partsBytes), -1)
+	// 输出提取的 JSON 字符串
+	var drivingInfo *api.DrivingLicenseAPIResponse
+	for _, jsonString := range jsonStrings {
+		jsonString = strings.ReplaceAll(jsonString, "\\n", "")
+		jsonString = strings.ReplaceAll(jsonString, "\\", "")
+
+		err := json.Unmarshal([]byte(jsonString), &drivingInfo)
+		if err != nil {
+			return nil, err
+		}
+		break
+	}
+	outputFormat := "02/01/2006"
+	if drivingInfo.Data != nil {
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.BirthDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.BirthDate = converDate
+		}
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.InitialIssueDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.InitialIssueDate = converDate
+		}
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.ValidFromDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.ValidFromDate = converDate
+		}
+	}
+	return drivingInfo, nil
+}

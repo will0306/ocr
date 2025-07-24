@@ -5,6 +5,7 @@ import (
 	"codeocr/lib/ocr/bigmodel"
 	"codeocr/lib/ocr/gemini"
 	"codeocr/lib/ocr/mistral"
+	"codeocr/lib/ocr/modelscope"
 	"codeocr/lib/ocr/openrouter"
 	"codeocr/lib/ocr/siliconflow"
 	"context"
@@ -18,12 +19,14 @@ var (
 		"mistral":     mistral.MistralServ{},
 		"openrouter":  openrouter.OpenRouterServ{},
 		"siliconflow": siliconflow.SiliconflowServ{},
+		"modelscope":  modelscope.ModelscopeServ{},
 	}
 )
 
 type OcrServer interface {
 	ImageNumber(ctx context.Context, imageBase64, modelName string) (resp string, err error)
 	PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error)
+	DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error)
 }
 
 func NewOcr(platform string) (serv OcrServer) {

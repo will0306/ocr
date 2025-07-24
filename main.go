@@ -40,6 +40,20 @@ func (Ocr) PassportHandler(ctx context.Context, req *api.OcrPassportReq) (resp *
 
 }
 
+func (Ocr) DrivingLicenseHandler(ctx context.Context, req *api.OcrDrivingLicenseReq) (resp *api.OcrDrivingLicenseRes, err error) {
+
+	serv := ocr.NewOcr(req.Platform)
+	drivingLicenseInfo, err := serv.DrivingLicenseInfo(ctx, req.Content, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	resp = &api.OcrDrivingLicenseRes{
+		DrivingLicenseInfo: drivingLicenseInfo,
+	}
+
+	return resp, nil
+}
+
 func Middleware(r *ghttp.Request) {
 	r.Middleware.Next()
 

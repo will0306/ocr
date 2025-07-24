@@ -216,3 +216,111 @@ func (b OpenRouterServ) PassportInfo(ctx context.Context, imageBase64, modelName
 	}
 	return passportInfo, nil
 }
+
+func (b OpenRouterServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
+
+	if modelName == "" {
+		modelName = defaultModel
+	}
+	adapter, err := gcfg.NewAdapterFile("config")
+	if err != nil {
+		return nil, err
+	}
+	err = adapter.AddPath("config/")
+	if err != nil {
+		return nil, err
+	}
+	secret, err := adapter.Get(ctx, secretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	url := endPoint
+	method := "POST"
+
+	reqBody := `
+{
+    "model": "%s",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": {
+                "url": "%s"
+            }
+          },
+          {
+            "type": "text",
+            "text": "Return in English JSON format: {\"data\": {\"face\": {\"licenseNumber\": \"\", \"name\": \"\", \"sex\": \"\", \"nationality\": \"\", \"address\": \"\", \"birthDate\": \"\", \"initialIssueDate\": \"\", \"approvedType\": \"\", \"issueAuthority\": \"\", \"validFromDate\": \"\", \"validPeriod\": \"\"}, \"back\": {\"name\": \"\", \"recordNumber\": \"\", \"record\": \"\", \"licenseNumber\": \"\"}}}. Use uppercase where appropriate. Date format: 02/01/2006. If information not present, leave empty string."
+          }
+        ]
+      }
+    ]
+}
+	`
+	reqBody = fmt.Sprintf(reqBody, modelName, imageBase64)
+
+	payload := strings.NewReader(reqBody)
+	client := &http.Client{}
+	httpReq, err := http.NewRequest(method, url, payload)
+
+	if err != nil {
+		g.Log().Errorf(ctx, "http_error: %s", err.Error())
+		return
+	}
+	httpReq.Header.Add("Authorization", fmt.Sprintf("Bearer %s", secret))
+	httpReq.Header.Add("Content-Type", "application/json")
+
+	startTime := time.Now().Unix()
+	httpResp, err := client.Do(httpReq)
+	if err != nil {
+		g.Log().Errorf(ctx, "http_request: %s", err.Error())
+		return
+	}
+	endTime := time.Now().Unix()
+	g.Log().Infof(ctx, "%s cost %d second", tool.GetFuncInfo(), endTime-startTime)
+	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		g.Log().Errorf(ctx, "io_ReadAll: %s", err.Error())
+		return
+	}
+	var bigModelResp *api.BigModelResp
+	err = json.Unmarshal(body, &bigModelResp)
+	if err != nil {
+		return nil, err
+	}
+	if len(bigModelResp.Choices) == 0 || bigModelResp.Choices[0].Message.Content == "" {
+		return nil, nil
+	}
+	// 使用正则表达式提取JSON内容
+	re := regexp.MustCompile(`(?s)\\{.*?\\}`)
+	matches := re.FindStringSubmatch(bigModelResp.Choices[0].Message.Content)
+	if len(matches) == 0 {
+		g.Log().Warningf(ctx, "exception, input: %s", bigModelResp.Choices[0].Message.Content)
+		return nil, nil
+	}
+	var drivingInfo *api.DrivingLicenseAPIResponse
+	err = json.Unmarshal([]byte(matches[0]), &drivingInfo)
+
+	if err != nil {
+		return nil, err
+	}
+
+	outputFormat := "02/01/2006"
+	if drivingInfo.Data != nil {
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.BirthDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.BirthDate = converDate
+		}
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.InitialIssueDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.InitialIssueDate = converDate
+		}
+		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.ValidFromDate, outputFormat); err == nil {
+			drivingInfo.Data.Face.ValidFromDate = converDate
+		}
+	}
+	return drivingInfo, nil
+}

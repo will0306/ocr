@@ -1,4 +1,4 @@
-package bigmodel
+package modelscope
 
 import (
 	"codeocr/api"
@@ -17,14 +17,14 @@ import (
 )
 
 var (
-	defaultModel = "glm-4v-flash"
-	secretKey    = "bigmodel.secret"
-	endPoint     = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+	defaultModel = "qwen-vl-max"
+	secretKey    = "modelscope.secret"
+	endPoint     = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 )
 
-type BigModelServ struct{}
+type ModelscopeServ struct{}
 
-func (b BigModelServ) ImageNumber(ctx context.Context, imageBase64 string, modelName string) (resp string, err error) {
+func (b ModelscopeServ) ImageNumber(ctx context.Context, imageBase64 string, modelName string) (resp string, err error) {
 
 	if modelName == "" {
 		modelName = defaultModel
@@ -60,7 +60,7 @@ func (b BigModelServ) ImageNumber(ctx context.Context, imageBase64 string, model
           },
           {
             "type": "text",
-            "text": "只返回数字"
+            "text": "Return only the number from the image"
           }
         ]
       }
@@ -105,10 +105,13 @@ func (b BigModelServ) ImageNumber(ctx context.Context, imageBase64 string, model
 	}
 	g.Log().Infof(ctx, "%s cost %d second, ocr: %+v", tool.GetFuncInfo(), endTime-startTime, bigModelResp.Choices[0].Message.Content)
 	codes := tool.ExtractNumbers(bigModelResp.Choices[0].Message.Content)
+	if len(codes) == 0 {
+		return "", nil
+	}
 	return codes[0], nil
 }
 
-func (b BigModelServ) PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error) {
+func (b ModelscopeServ) PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error) {
 
 	if modelName == "" {
 		modelName = defaultModel
@@ -144,7 +147,7 @@ func (b BigModelServ) PassportInfo(ctx context.Context, imageBase64, modelName s
           },
           {
             "type": "text",
-            "text": "用英文json格式返回出生日期(birth_date)、姓(surname, 字母大写)、名(givename, 字母大写)、护照号(passport_no)、发行日(issue_date)、过期日(expiry_date)、性别(sex, 只有F或者M)、国籍(nationality)、国家代号(country_code), 日期格式: 23/01/1994, 不需要patronymic name"
+            "text": "Return in English JSON format: birth_date, surname (uppercase letters), givename (uppercase letters), passport_no, issue_date, expiry_date, sex (only F or M), nationality, country_code. Date format: 23/01/1994. Do not include patronymic name."
           }
         ]
       }
@@ -188,14 +191,14 @@ func (b BigModelServ) PassportInfo(ctx context.Context, imageBase64, modelName s
 		return nil, nil
 	}
 	// 使用正则表达式提取JSON内容
-	re := regexp.MustCompile("(?s)```json\\s*(\\{.*?\\})\\s*```")
+	re := regexp.MustCompile(`(?s)\{.*?\}`)
 	matches := re.FindStringSubmatch(bigModelResp.Choices[0].Message.Content)
-	if len(matches) <= 1 {
+	if len(matches) == 0 {
 		g.Log().Warningf(ctx, "exception, input: %s", bigModelResp.Choices[0].Message.Content)
 		return nil, nil
 	}
 	var passportInfo *api.PassportInfo
-	err = json.Unmarshal([]byte(matches[1]), &passportInfo)
+	err = json.Unmarshal([]byte(matches[0]), &passportInfo)
 
 	if err != nil {
 		return nil, err
@@ -214,7 +217,7 @@ func (b BigModelServ) PassportInfo(ctx context.Context, imageBase64, modelName s
 	return passportInfo, nil
 }
 
-func (b BigModelServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
+func (b ModelscopeServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
 
 	if modelName == "" {
 		modelName = defaultModel
@@ -294,14 +297,14 @@ func (b BigModelServ) DrivingLicenseInfo(ctx context.Context, imageBase64, model
 		return nil, nil
 	}
 	// 使用正则表达式提取JSON内容
-	re := regexp.MustCompile("(?s)```json\\s*(\\{.*?\\})\\s*```")
+	re := regexp.MustCompile(`(?s)\\{.*?\\}`)
 	matches := re.FindStringSubmatch(bigModelResp.Choices[0].Message.Content)
-	if len(matches) <= 1 {
+	if len(matches) == 0 {
 		g.Log().Warningf(ctx, "exception, input: %s", bigModelResp.Choices[0].Message.Content)
 		return nil, nil
 	}
 	var drivingInfo *api.DrivingLicenseAPIResponse
-	err = json.Unmarshal([]byte(matches[1]), &drivingInfo)
+	err = json.Unmarshal([]byte(matches[0]), &drivingInfo)
 
 	if err != nil {
 		return nil, err
