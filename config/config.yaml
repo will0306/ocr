@@ -10,5 +10,11 @@ bigmodel:
 mistral:
   secret: ""
 
+openrouter:
+  secret: ""
+
+siliconflow:
+  secret: ""
+
 
 

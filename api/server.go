@@ -33,7 +33,7 @@ type Response struct {
 type OcrReq struct {
 	g.Meta   `path:"/ocr" method:"post"`
 	Content  string `v:"required" json:"content"`
-	Platform string `json:"platform"`
+	Platform string `json:"platform" d:"bigmodel"`
 	Model    string `json:"model"`
 }
 

@@ -5,15 +5,19 @@ import (
 	"codeocr/lib/ocr/bigmodel"
 	"codeocr/lib/ocr/gemini"
 	"codeocr/lib/ocr/mistral"
+	"codeocr/lib/ocr/openrouter"
+	"codeocr/lib/ocr/siliconflow"
 	"context"
 )
 
 var (
 	defaultPlatform = "gemini"
 	platformMap     = map[string]OcrServer{
-		"gemini":   gemini.GeminiServ{},
-		"bigmodel": bigmodel.BigModelServ{},
-		"mistral":  mistral.MistralServ{},
+		"gemini":      gemini.GeminiServ{},
+		"bigmodel":    bigmodel.BigModelServ{},
+		"mistral":     mistral.MistralServ{},
+		"openrouter":  openrouter.OpenRouterServ{},
+		"siliconflow": siliconflow.SiliconflowServ{},
 	}
 )
 
