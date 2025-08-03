@@ -26,7 +26,7 @@ var (
 type OcrServer interface {
 	ImageNumber(ctx context.Context, imageBase64, modelName string) (resp string, err error)
 	PassportInfo(ctx context.Context, imageBase64, modelName string) (resp *api.PassportInfo, err error)
-	DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error)
+	DrivingLicenseInfo(ctx context.Context, imageBase64, modelName, language string) (resp *api.DriverLicenseInfo, err error)
 }
 
 func NewOcr(platform string) (serv OcrServer) {

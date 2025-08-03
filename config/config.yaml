@@ -16,5 +16,8 @@ openrouter:
 siliconflow:
   secret: ""
 
+modelscope:
+  secret: ""
+
 
 

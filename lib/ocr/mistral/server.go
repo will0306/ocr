@@ -214,8 +214,7 @@ func (b MistralServ) PassportInfo(ctx context.Context, imageBase64, modelName st
 	return passportInfo, nil
 }
 
-func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
-
+func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName, language string) (resp *api.DriverLicenseInfo, err error) {
 	if modelName == "" {
 		modelName = defaultModel
 	}
@@ -250,7 +249,7 @@ func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelN
           },
           {
             "type": "text",
-            "text": "Return in English JSON format: {\"data\": {\"face\": {\"licenseNumber\": \"\", \"name\": \"\", \"sex\": \"\", \"nationality\": \"\", \"address\": \"\", \"birthDate\": \"\", \"initialIssueDate\": \"\", \"approvedType\": \"\", \"issueAuthority\": \"\", \"validFromDate\": \"\", \"validPeriod\": \"\"}, \"back\": {\"name\": \"\", \"recordNumber\": \"\", \"record\": \"\", \"licenseNumber\": \"\"}}}. Use uppercase where appropriate. Date format: 02/01/2006. If information not present, leave empty string."
+            "text": "Extract the following fields from this driver's license image: Name, license_number, date_of_birth (format yyyy.mm.dd), issue_date (format yyyy.mm.dd), expiry_date (format yyyy.mm.dd), Address, Class, Gender. Return as JSON object."
           }
         ]
       }
@@ -262,10 +261,9 @@ func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelN
 	payload := strings.NewReader(reqBody)
 	client := &http.Client{}
 	httpReq, err := http.NewRequest(method, url, payload)
-
 	if err != nil {
 		g.Log().Errorf(ctx, "http_error: %s", err.Error())
-		return
+		return nil, err
 	}
 	httpReq.Header.Add("Authorization", fmt.Sprintf("Bearer %s", secret))
 	httpReq.Header.Add("Content-Type", "application/json")
@@ -274,7 +272,7 @@ func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelN
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
 		g.Log().Errorf(ctx, "http_request: %s", err.Error())
-		return
+		return nil, err
 	}
 	endTime := time.Now().Unix()
 	g.Log().Infof(ctx, "%s cost %d second", tool.GetFuncInfo(), endTime-startTime)
@@ -283,7 +281,7 @@ func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelN
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		g.Log().Errorf(ctx, "io_ReadAll: %s", err.Error())
-		return
+		return nil, err
 	}
 	var bigModelResp *api.BigModelResp
 	err = json.Unmarshal(body, &bigModelResp)
@@ -293,31 +291,82 @@ func (b MistralServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelN
 	if len(bigModelResp.Choices) == 0 || bigModelResp.Choices[0].Message.Content == "" {
 		return nil, nil
 	}
-	// 使用正则表达式提取JSON内容
-	re := regexp.MustCompile("(?s)```json\\s*(\\{.*?\\})\\s*```")
-	matches := re.FindStringSubmatch(bigModelResp.Choices[0].Message.Content)
-	if len(matches) <= 1 {
-		g.Log().Warningf(ctx, "exception, input: %s", bigModelResp.Choices[0].Message.Content)
-		return nil, nil
+	content := bigModelResp.Choices[0].Message.Content
+	startIdx := strings.Index(content, "{")
+	endIdx := strings.LastIndex(content, "}")
+	var jsonStr string
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		jsonStr = content[startIdx : endIdx+1]
+	} else {
+		jsonStr = content
 	}
-	var drivingInfo *api.DrivingLicenseAPIResponse
-	err = json.Unmarshal([]byte(matches[1]), &drivingInfo)
-
+	var info api.DriverLicenseInfo
+	err = json.Unmarshal([]byte(jsonStr), &info)
 	if err != nil {
 		return nil, err
 	}
-
-	outputFormat := "02/01/2006"
-	if drivingInfo.Data != nil {
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.BirthDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.BirthDate = converDate
+	if language != "" && language != "English" {
+		transReqBody := `
+{
+    "model": "%s",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Translate to %s ONLY the following fields: Name '%s' to translated Name, Address '%s' to translated Address, Class '%s' to translated Class, Gender '%s' to translated Gender. For the other fields, COPY EXACTLY: License Number '%s', Date of Birth '%s', Issue Date '%s', Expiry Date '%s'. Return a JSON object with fields: name, license_number, date_of_birth, issue_date, expiry_date, address, class, gender using the translated or copied values."
+          }
+        ]
+      }
+    ]
+}
+		`
+		transReqBody = fmt.Sprintf(transReqBody, modelName, language, info.Name, info.Address, info.Class, info.Gender, info.LicenseNumber, info.DateOfBirth, info.IssueDate, info.ExpiryDate)
+		transPayload := strings.NewReader(transReqBody)
+		transHttpReq, err := http.NewRequest(method, url, transPayload)
+		if err != nil {
+			return &info, nil
 		}
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.InitialIssueDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.InitialIssueDate = converDate
+		transHttpReq.Header.Add("Authorization", fmt.Sprintf("Bearer %s", secret))
+		transHttpReq.Header.Add("Content-Type", "application/json")
+		transHttpResp, err := client.Do(transHttpReq)
+		if err != nil {
+			return &info, nil
 		}
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.ValidFromDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.ValidFromDate = converDate
+		defer transHttpResp.Body.Close()
+		transBody, err := io.ReadAll(transHttpResp.Body)
+		if err != nil {
+			return &info, nil
+		}
+		var transBigModelResp *api.BigModelResp
+		err = json.Unmarshal(transBody, &transBigModelResp)
+		if err != nil {
+			return &info, nil
+		}
+		if len(transBigModelResp.Choices) == 0 || transBigModelResp.Choices[0].Message.Content == "" {
+			return &info, nil
+		}
+		transContent := transBigModelResp.Choices[0].Message.Content
+		transStartIdx := strings.Index(transContent, "{")
+		transEndIdx := strings.LastIndex(transContent, "}")
+		if transStartIdx != -1 && transEndIdx != -1 && transEndIdx > transStartIdx {
+			transJsonStr := transContent[transStartIdx : transEndIdx+1]
+			err = json.Unmarshal([]byte(transJsonStr), &info)
+			if err != nil {
+				return &info, nil
+			}
 		}
 	}
-	return drivingInfo, nil
+	outputFormat := "2006.01.02"
+	if converted, err := tool.ParseAndFormatDate(info.DateOfBirth, outputFormat); err == nil {
+		info.DateOfBirth = converted
+	}
+	if converted, err := tool.ParseAndFormatDate(info.IssueDate, outputFormat); err == nil {
+		info.IssueDate = converted
+	}
+	if converted, err := tool.ParseAndFormatDate(info.ExpiryDate, outputFormat); err == nil {
+		info.ExpiryDate = converted
+	}
+	return &info, nil
 }

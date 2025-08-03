@@ -70,7 +70,7 @@ type GeminiServ struct{}
 func (b GeminiServ) ImageNumber(ctx context.Context, imageBase64 string, modelName string) (resp string, err error) {
 
 	if modelName == "" {
-		modelName = "gemini-1.5-flash"
+		modelName = "gemini-2.5-flash-lite"
 	}
 	decodedBytes, err := base64ToBytes(imageBase64)
 	if err != nil {
@@ -210,9 +210,7 @@ func (b GeminiServ) PassportInfo(ctx context.Context, imageBase64, modelName str
 	return passportInfo, nil
 }
 
-func (b GeminiServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName string) (resp *api.DrivingLicenseAPIResponse, err error) {
-
-	var reader io.Reader
+func (b GeminiServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelName, language string) (resp *api.DriverLicenseInfo, err error) {
 	var imageBytes []byte
 	if modelName == "" {
 		modelName = "gemini-1.5-flash"
@@ -223,14 +221,12 @@ func (b GeminiServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelNa
 			return nil, err
 		}
 		defer imageResp.Body.Close()
-		reader = imageResp.Body
-		imageBytes, err = io.ReadAll(reader)
+		imageBytes, err = io.ReadAll(imageResp.Body)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-
-		reader, err = base64ToReader(imageBase64)
+		reader, err := base64ToReader(imageBase64)
 		if err != nil {
 			return nil, err
 		}
@@ -259,58 +255,61 @@ func (b GeminiServ) DrivingLicenseInfo(ctx context.Context, imageBase64, modelNa
 	}
 	defer client.Close()
 
-	startTime := time.Now().Unix()
-	// The Gemini 1.5 models are versatile and work with most use cases
 	genaiModel := client.GenerativeModel(modelName)
 
-	genaiReq := []genai.Part{
+	prompt := []genai.Part{
 		genai.ImageData("jpeg", imageBytes),
-
-		genai.Text("Return in English JSON format: {\"data\": {\"face\": {\"licenseNumber\": \"\", \"name\": \"\", \"sex\": \"\", \"nationality\": \"\", \"address\": \"\", \"birthDate\": \"\", \"initialIssueDate\": \"\", \"approvedType\": \"\", \"issueAuthority\": \"\", \"validFromDate\": \"\", \"validPeriod\": \"\"}, \"back\": {\"name\": \"\", \"recordNumber\": \"\", \"record\": \"\", \"licenseNumber\": \"\"}}}. Use uppercase where appropriate. Date format: 02/01/2006. If information not present, leave empty string."),
+		genai.Text("Extract the following fields from this driver's license image: Name, license_number, date_of_birth (format yyyy.mm.dd), issue_date (format yyyy.mm.dd), expiry_date (format yyyy.mm.dd), Address, Class, Gender. Return as JSON object."),
 	}
-
-	// Generate content.
-	geminiResp, err := genaiModel.GenerateContent(ctx, genaiReq...)
+	geminiResp, err := genaiModel.GenerateContent(ctx, prompt...)
 	if err != nil {
 		return nil, err
 	}
-
-	endTime := time.Now().Unix()
-	g.Log().Infof(ctx, "%s cost %d second", tool.GetFuncInfo(), endTime-startTime)
+	if len(geminiResp.Candidates) == 0 {
+		return nil, fmt.Errorf("no candidates in response")
+	}
+	content := geminiResp.Candidates[0].Content.Parts[0]
+	text, ok := content.(genai.Text)
+	if !ok {
+		return nil, fmt.Errorf("unexpected content type")
+	}
+	var jsonStr string
+	startIdx := strings.Index(string(text), "{")
+	endIdx := strings.LastIndex(string(text), "}")
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		jsonStr = string(text)[startIdx : endIdx+1]
+	} else {
+		jsonStr = string(text)
+	}
+	var info api.DriverLicenseInfo
+	err = json.Unmarshal([]byte(jsonStr), &info)
 	if err != nil {
 		return nil, err
 	}
-
-	// 定义用于匹配 JSON 的正则表达式
-	re := regexp.MustCompile(`\{.*?\}`)
-
-	// 查找所有 JSON 子串
-	partsBytes, _ := json.Marshal(geminiResp.Candidates[0].Content.Parts)
-
-	jsonStrings := re.FindAllString(string(partsBytes), -1)
-	// 输出提取的 JSON 字符串
-	var drivingInfo *api.DrivingLicenseAPIResponse
-	for _, jsonString := range jsonStrings {
-		jsonString = strings.ReplaceAll(jsonString, "\\n", "")
-		jsonString = strings.ReplaceAll(jsonString, "\\", "")
-
-		err := json.Unmarshal([]byte(jsonString), &drivingInfo)
+	if language != "" && language != "English" {
+		promptStr := fmt.Sprintf("Translate to %s ONLY the following fields: Name '%s' to translated Name, Address '%s' to translated Address, Class '%s' to translated Class, Gender '%s' to translated Gender. For the other fields, COPY EXACTLY: License Number '%s', Date of Birth '%s', Issue Date '%s', Expiry Date '%s'. Return a JSON object with fields: name, license_number, date_of_birth, issue_date, expiry_date, address, class, gender using the translated or copied values.",
+			language, info.Name, info.Address, info.Class, info.Gender, info.LicenseNumber, info.DateOfBirth, info.IssueDate, info.ExpiryDate)
+		transResp, err := genaiModel.GenerateContent(ctx, genai.Text(promptStr))
 		if err != nil {
-			return nil, err
+			return &info, nil // return original on error
 		}
-		break
+		if len(transResp.Candidates) == 0 {
+			return &info, nil
+		}
+		transContent := transResp.Candidates[0].Content.Parts[0]
+		transText, ok := transContent.(genai.Text)
+		if !ok {
+			return &info, nil
+		}
+		transStartIdx := strings.Index(string(transText), "{")
+		transEndIdx := strings.LastIndex(string(transText), "}")
+		if transStartIdx != -1 && transEndIdx != -1 && transEndIdx > transStartIdx {
+			transJsonStr := string(transText)[transStartIdx : transEndIdx+1]
+			err = json.Unmarshal([]byte(transJsonStr), &info)
+			if err != nil {
+				return &info, nil
+			}
+		}
 	}
-	outputFormat := "02/01/2006"
-	if drivingInfo.Data != nil {
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.BirthDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.BirthDate = converDate
-		}
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.InitialIssueDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.InitialIssueDate = converDate
-		}
-		if converDate, err := tool.ParseAndFormatDate(drivingInfo.Data.Face.ValidFromDate, outputFormat); err == nil {
-			drivingInfo.Data.Face.ValidFromDate = converDate
-		}
-	}
-	return drivingInfo, nil
+	return &info, nil
 }

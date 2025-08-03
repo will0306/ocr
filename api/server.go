@@ -75,7 +75,7 @@ type OcrDrivingLicenseReq struct {
 }
 
 type OcrDrivingLicenseRes struct {
-	DrivingLicenseInfo *DrivingLicenseAPIResponse `json:"driving_license_info"    dc:"api result"`
+	DrivingLicenseInfo *DriverLicenseInfo `json:"driving_license_info"    dc:"api result"`
 }
 
 // Point 定义一个二维坐标点
@@ -132,4 +132,15 @@ type DrivingLicenseAPIResponse struct {
 	Width             int                 `json:"width"`              // 算法矫正图片后的宽度。
 	OrgHeight         int                 `json:"orgHeight"`          // 原图的高度。
 	OrgWidth          int                 `json:"orgWidth"`           // 原图的宽度。
+}
+
+type DriverLicenseInfo struct {
+	Name          string `json:"name"`
+	LicenseNumber string `json:"license_number"`
+	DateOfBirth   string `json:"date_of_birth"`
+	IssueDate     string `json:"issue_date"`
+	ExpiryDate    string `json:"expiry_date"`
+	Address       string `json:"address"`
+	Class         string `json:"class"`
+	Gender        string `json:"gender"`
 }
